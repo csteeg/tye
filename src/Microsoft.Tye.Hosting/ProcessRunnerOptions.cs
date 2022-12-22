@@ -14,6 +14,7 @@ namespace Microsoft.Tye.Hosting
         public string[]? ServicesToDebug { get; set; }
         public bool DebugAllServices { get; set; }
         public bool Watch { get; set; }
+        public bool HotReload { get; set; }
         public bool ManualStartServices { get; set; }
         public string[]? ServicesNotToStart { get; set; }
 

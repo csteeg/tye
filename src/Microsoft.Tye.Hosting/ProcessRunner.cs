@@ -68,9 +68,20 @@ namespace Microsoft.Tye.Hosting
                 string workingDirectory;
                 if (serviceDescription.RunInfo is ProjectRunInfo project)
                 {
-                    path = project.RunCommand;
-                    workingDirectory = project.ProjectFile.Directory!.FullName;
                     args = project.Args == null ? project.RunArguments : project.RunArguments + " " + project.Args;
+
+                    if (project.HotReload)
+                    {
+                        path = "dotnet";
+                        args = $"watch run --non-interactive --project {project.ProjectFile.FullName} -- {args}";
+                        project.Build = false;
+                    }
+                    else
+                    {
+                        path = project.RunCommand;
+                    }
+
+                    workingDirectory = project.ProjectFile.Directory!.FullName;
                     buildProperties = project.BuildProperties.Aggregate(string.Empty, (current, property) => current + $";{property.Key}={property.Value}").TrimStart(';');
 
                     service.Status.ProjectFilePath = project.ProjectFile.FullName;
@@ -205,7 +216,9 @@ namespace Microsoft.Tye.Hosting
                     ["ASPNETCORE_ENVIRONMENT"] = "Development",
                     // Remove the color codes from the console output
                     ["DOTNET_LOGGING__CONSOLE__DISABLECOLORS"] = "true",
-                    ["ASPNETCORE_LOGGING__CONSOLE__DISABLECOLORS"] = "true"
+                    ["ASPNETCORE_LOGGING__CONSOLE__DISABLECOLORS"] = "true",
+                    // disable browser start if hot reload is used
+                    ["DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER"] = "true"
                 };
 
                 // Set up environment variables to use the version of dotnet we're using to run
@@ -299,6 +312,7 @@ namespace Microsoft.Tye.Hosting
                     try
                     {
                         service.Logs.OnNext($"[{replica}]:{path} {copiedArgs}");
+                        bool logWatch = service.Description.RunInfo is ProjectRunInfo project && project.HotReload;
                         var processSpec = new ProcessSpec
                         {
                             Executable = path,
@@ -308,6 +322,10 @@ namespace Microsoft.Tye.Hosting
                             OutputData = data =>
                             {
                                 service.Logs.OnNext($"[{replica}]: {data}");
+                                if (logWatch && data.StartsWith("dotnet watch"))
+                                {
+                                    _logger.LogInformation("[{replica}] {data}", replica, data);
+                                }
                             },
                             ErrorData = data => service.Logs.OnNext($"[{replica}]: {data}"),
                             OnStart = pid =>
