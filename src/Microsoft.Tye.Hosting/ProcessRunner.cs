@@ -86,17 +86,7 @@ namespace Microsoft.Tye.Hosting
                 if (serviceDescription.RunInfo is ProjectRunInfo project)
                 {
                     args = project.Args == null ? project.RunArguments : project.RunArguments + " " + project.Args;
-
-                    if (project.HotReload)
-                    {
-                        path = "dotnet";
-                        args = $"watch run --non-interactive --project {project.ProjectFile.FullName} -- {args}";
-                        project.Build = false;
-                    }
-                    else
-                    {
-                        path = project.RunCommand;
-                    }
+                    path = project.RunCommand;
 
                     workingDirectory = project.ProjectFile.Directory!.FullName;
                     buildProperties = project.BuildProperties.Aggregate(string.Empty, (current, property) => current + $";{property.Key}={property.Value}").TrimStart(';');
@@ -195,7 +185,7 @@ namespace Microsoft.Tye.Hosting
 
         {
             var processInfo = (service.Items.ContainsKey(typeof(ProcessInfo)) ? (ProcessInfo?)service.Items[typeof(ProcessInfo)] : null)
-                                      ?? new ProcessInfo(new Task[service.Description.Replicas]);
+                                      ?? new ProcessInfo(new Task[service.Description.Replicas], _options.Watch);
             var serviceName = service.Description.Name;
 
             async Task RunApplicationAsync(IEnumerable<(int ExternalPort, int Port, string? Protocol, string? Host)> ports)
@@ -301,7 +291,7 @@ namespace Microsoft.Tye.Hosting
                         service.Logs.OnNext($"[{replica}]:{path} {copiedArgs}");
 
                         var project = service.Description.RunInfo as ProjectRunInfo;
-                        var hotreload = _options.Watch && project != null && project.HotReload;
+                        var hotreload = project != null && processInfo.Watch && project.HotReload;
 
                         if (hotreload)
                         {
@@ -385,12 +375,12 @@ namespace Microsoft.Tye.Hosting
                                     service.ReplicaEvents.OnNext(new ReplicaEvent(ReplicaState.Stopped, status));
                                 }
 
-                                if (!_options.Watch)
+                                if (!processInfo!.Watch)
                                 {
                                     // Only increase backoff when not watching project as watch will wait for file changes before rebuild.
                                     backOff *= 2;
                                 }
-                                if (!processInfo.StoppedTokenSource.IsCancellationRequested)
+                                if (!processInfo!.StoppedTokenSource.IsCancellationRequested)
                                 {
                                     service.Restarts++;
                                 }
@@ -416,7 +406,7 @@ namespace Microsoft.Tye.Hosting
                             }
                         };
 
-                        if (!hotreload && _options.Watch && project != null)
+                        if (!hotreload && project != null && processInfo.Watch)
                         {
                             var projectFile = project.ProjectFile.FullName;
                             var fileSetFactory = new MsBuildFileSetFactory(_logger,
@@ -428,7 +418,7 @@ namespace Microsoft.Tye.Hosting
                             await new DotNetWatcher(_logger)
                                 .WatchAsync(processSpec, fileSetFactory, replica, status.StoppingTokenSource.Token);
                         }
-                        else if (_options.Watch && (service.Description.RunInfo is AzureFunctionRunInfo azureFunctionRunInfo) && !string.IsNullOrEmpty(azureFunctionRunInfo.ProjectFile))
+                        else if (processInfo.Watch && (service.Description.RunInfo is AzureFunctionRunInfo azureFunctionRunInfo) && !string.IsNullOrEmpty(azureFunctionRunInfo.ProjectFile))
                         {
                             var projectFile = azureFunctionRunInfo.ProjectFile;
                             var fileSetFactory = new MsBuildFileSetFactory(_logger,
@@ -516,6 +506,21 @@ namespace Microsoft.Tye.Hosting
             }
         }
 
+        public static Task SetWatchStateAsync(Service service, bool watch)
+        {
+            if (service.Items.TryGetValue(typeof(ProcessInfo), out var stateObj) && stateObj is ProcessInfo state && state.Watch != watch)
+            {
+                state.Watch = watch;
+                return RestartService(service);
+            }
+            return Task.CompletedTask;
+        }
+
+        public static bool IsWatching(Service service)
+        {
+            return service.Items.TryGetValue(typeof(ProcessInfo), out var stateObj) && stateObj is ProcessInfo state && state.Watch;
+        }
+
         public static async Task RestartService(Service service)
         {
             if (service.Items.TryGetValue(typeof(ProcessInfo), out var stateObj) && stateObj is ProcessInfo state)
@@ -601,16 +606,17 @@ namespace Microsoft.Tye.Hosting
 
         private class ProcessInfo
         {
-
-            public ProcessInfo(Task[] tasks)
+            public ProcessInfo(Task[] tasks, bool watch)
             {
                 Tasks = tasks;
+                Watch = watch;
             }
 
             public Task[] Tasks { get; }
 
             public CancellationTokenSource StoppedTokenSource { get; private set; } = new CancellationTokenSource();
             public Action? Start { get; internal set; }
+            public bool Watch { get; set; }
             internal void ResetStoppedTokenSource()
             {
                 StoppedTokenSource.Dispose();

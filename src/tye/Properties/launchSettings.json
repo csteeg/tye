@@ -2,9 +2,9 @@
   "profiles": {
     "tye": {
       "commandName": "Project",
-      "commandLineArgs": "run --no-start * --logs console",
+      "commandLineArgs": "run --no-start * --logs console --verbosity debug --no-build",
       "workingDirectory": "C:\\Projects\\NcareAll\\.ncare",
-      "hotReloadEnabled": false
+      "hotReloadEnabled": true
     }
   }
 }
