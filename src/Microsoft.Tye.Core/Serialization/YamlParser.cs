@@ -44,7 +44,7 @@ namespace Tye.Serialization
             {
                 if (_fileInfo != null)
                 {
-                    throw new TyeYamlException(ex.Start, $"Unable to parse '{_fileInfo.Name}'. See inner exception.", ex, _fileInfo);
+                    throw new TyeYamlException(ex.Start, $"Unable to parse '{_fileInfo.FullName}'. See inner exception.", ex, _fileInfo);
                 }
 
                 throw new TyeYamlException(ex.Start, $"Unable to parse YAML.  See inner exception.", ex);
