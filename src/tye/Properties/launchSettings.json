@@ -2,7 +2,7 @@
   "profiles": {
     "tye": {
       "commandName": "Project",
-      "commandLineArgs": "run --no-start * --logs console --verbosity debug --no-build",
+      "commandLineArgs": "run --no-start * --verbosity debug --use-dotnet-run --no-build --logs console",
       "workingDirectory": "C:\\Projects\\NcareAll\\.ncare",
       "hotReloadEnabled": true
     }

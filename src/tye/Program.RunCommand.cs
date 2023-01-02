@@ -26,6 +26,11 @@ namespace Microsoft.Tye
                     Description = "Do not build project files before running.",
                     Required = false
                 },
+                new Option("--use-dotnet-run")
+                {
+                    Description = "Use `dotnet run` to run dotnet projects instead of build + run compiled version.",
+                    Required = false
+                },
                 new Option("--port")
                 {
                     Description = "The port to run control plane on.",
@@ -102,7 +107,7 @@ namespace Microsoft.Tye
 
                 var filter = ApplicationFactoryFilter.GetApplicationFactoryFilter(args.Tags);
 
-                var application = await ApplicationFactory.CreateAsync(output, args.Path, args.Framework, filter);
+                var application = await ApplicationFactory.CreateAsync(output, args.Path, args.Framework, filter, !args.UseDotnetRun);
                 if (application.Services.Count == 0)
                 {
                     throw new CommandException($"No services found in \"{application.Source.Name}\"");
@@ -113,6 +118,7 @@ namespace Microsoft.Tye
                     Dashboard = args.Dashboard,
                     Docker = args.Docker,
                     NoBuild = args.NoBuild,
+                    UseDotnetRun = args.UseDotnetRun,
                     Port = args.Port,
 
                     // parsed later by the diagnostics code
@@ -175,6 +181,8 @@ namespace Microsoft.Tye
             public string Metrics { get; set; } = default!;
 
             public bool NoBuild { get; set; }
+
+            public bool UseDotnetRun { get; set; }
 
             public FileInfo Path { get; set; } = default!;
 

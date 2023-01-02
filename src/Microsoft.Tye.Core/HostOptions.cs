@@ -24,6 +24,8 @@ namespace Microsoft.Tye
 
         public bool NoBuild { get; set; }
 
+        public bool UseDotnetRun { get; set; }
+
         public int? Port { get; set; }
 
         public Verbosity LogVerbosity { get; set; } = Verbosity.Debug;

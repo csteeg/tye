@@ -11,6 +11,7 @@ namespace Microsoft.Tye.Hosting.Model
         Started,
         Stopped,
         Healthy,
-        Ready
+        Ready,
+        InteractionRequired
     }
 }

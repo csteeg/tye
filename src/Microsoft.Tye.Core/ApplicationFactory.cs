@@ -17,7 +17,7 @@ namespace Microsoft.Tye
 {
     public static class ApplicationFactory
     {
-        public static async Task<ApplicationBuilder> CreateAsync(OutputContext output, FileInfo source, string? framework = null, ApplicationFactoryFilter? filter = null)
+        public static async Task<ApplicationBuilder> CreateAsync(OutputContext output, FileInfo source, string? framework = null, ApplicationFactoryFilter? filter = null, bool evaluateDotnetMetadata = true)
         {
             if (source is null)
             {
@@ -83,6 +83,7 @@ namespace Microsoft.Tye
                     config.Services.Where(filter.ServicesFilter).ToList() :
                     config.Services;
 
+
                 // Infer project file for Azure Function services so they will be evaluated.
                 foreach (var service in services.Where(IsAzureFunctionService))
                 {
@@ -99,15 +100,25 @@ namespace Microsoft.Tye
                     }
                 }
 
+                var projectMetadata = new Dictionary<string, string>();
+                var projectServices = services.Where(s => !string.IsNullOrEmpty(s.Project));
+
+                foreach (var project in projectServices)
+                {
+                    var expandedProject = Environment.ExpandEnvironmentVariables(project.Project!);
+                    project.ProjectFullPath = Path.Combine(config.Source.DirectoryName!, expandedProject);
+
+                    if (!File.Exists(project.ProjectFullPath))
+                    {
+                        throw new CommandException($"Failed to locate project: '{project.ProjectFullPath}'.");
+                    }
+                }
+
                 var sw = Stopwatch.StartNew();
                 // Project services will be restored and evaluated before resolving all other services.
                 // This batching will mitigate the performance cost of running MSBuild out of process.
-                var projectServices = services.Where(s => !string.IsNullOrEmpty(s.Project));
-                var projectMetadata = new Dictionary<string, string>();
-
                 var msbuildEvaluationResult = await EvaluateProjectsAsync(
-                    projects: projectServices,
-                    configRoot: config.Source.DirectoryName!,
+                    projects: projectServices.Where(s => evaluateDotnetMetadata || IsAzureFunctionService(s)),
                     output: output);
                 var msbuildEvaluationOutput = msbuildEvaluationResult
                     .StandardOutput
@@ -144,7 +155,6 @@ namespace Microsoft.Tye
 
                     var multiTFMEvaluationResult = await EvaluateProjectsAsync(
                         projects: multiTFMProjects,
-                        configRoot: config.Source.DirectoryName!,
                         output: output);
                     var multiTFMEvaluationOutput = multiTFMEvaluationResult
                         .StandardOutput
@@ -204,7 +214,7 @@ namespace Microsoft.Tye
                         {
                             ProjectReader.ReadAzureFunctionProjectDetails(output, functionBuilder, projectMetadata[configService.Name]);
                         }
-
+                        
                         // TODO liveness?
                         service = functionBuilder;
                     }
@@ -230,13 +240,19 @@ namespace Microsoft.Tye
                         project.ContainerInfo = new ContainerInfo() { UseMultiphaseDockerfile = false, };
 
                         // If project evaluation is successful this should not happen, therefore an exception will be thrown.
-                        if (!projectMetadata.ContainsKey(configService.Name))
+                        if (evaluateDotnetMetadata)
                         {
-                            throw new CommandException($"Evaluated project metadata file could not be found for service {configService.Name}");
+                            if (!projectMetadata.ContainsKey(configService.Name))
+                            {
+                                throw new CommandException($"Evaluated project metadata file could not be found for service {configService.Name}");
+                            }
+
+                            ProjectReader.ReadProjectDetails(output, project, projectMetadata[configService.Name]);
                         }
-
-                        ProjectReader.ReadProjectDetails(output, project, projectMetadata[configService.Name]);
-
+                        else
+                        {
+                            project.RunCommand = "";
+                        }
                         // Do k8s by default.
                         project.ManifestInfo = new KubernetesManifestInfo();
                     }
@@ -503,8 +519,13 @@ namespace Microsoft.Tye
             return root;
         }
 
-        private static async Task<ProcessResult> EvaluateProjectsAsync(IEnumerable<ConfigService> projects, string configRoot, OutputContext output)
+        private static async Task<ProcessResult> EvaluateProjectsAsync(IEnumerable<ConfigService> projects, OutputContext output)
         {
+            if (!projects.Any())
+            {
+                return new ProcessResult(string.Empty, string.Empty, 0);
+            }
+
             using var directory = TempDirectory.Create();
             var projectPath = Path.Combine(directory.DirectoryPath, Path.GetRandomFileName() + ".proj");
 
@@ -514,14 +535,6 @@ namespace Microsoft.Tye
 
             foreach (var project in projects)
             {
-                var expandedProject = Environment.ExpandEnvironmentVariables(project.Project!);
-                project.ProjectFullPath = Path.Combine(configRoot, expandedProject);
-
-                if (!File.Exists(project.ProjectFullPath))
-                {
-                    throw new CommandException($"Failed to locate project: '{project.ProjectFullPath}'.");
-                }
-
                 sb.AppendLine($"        <MicrosoftTye_ProjectServices " +
                     $"Include=\"{project.ProjectFullPath}\" " +
                     $"Name=\"{project.Name}\" " +

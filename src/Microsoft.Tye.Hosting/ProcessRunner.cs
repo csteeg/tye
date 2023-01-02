@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -15,13 +16,13 @@ using Microsoft.DotNet.Watcher;
 using Microsoft.DotNet.Watcher.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Tye.Hosting.Model;
+using Serilog.Core;
 
 namespace Microsoft.Tye.Hosting
 {
     public class ProcessRunner : IApplicationProcessor
     {
         private const string ProcessReplicaStore = "process";
-
         private readonly ILogger _logger;
         private readonly ProcessRunnerOptions _options;
         private readonly ReplicaRegistry _replicaRegistry;
@@ -55,7 +56,7 @@ namespace Microsoft.Tye.Hosting
 
         private async Task BuildAndRunProjects(Application application)
         {
-            await BuildProjects(application.Services.Values, application.ContextDirectory);
+            await BuildProjectsAsync(application.Services.Values, application.ContextDirectory);
 
             foreach (var s in application.Services)
             {
@@ -70,7 +71,7 @@ namespace Microsoft.Tye.Hosting
             }
         }
 
-        private async Task BuildProjects(IEnumerable<Service> services, string buildWorkingDirectory)
+        private async Task BuildProjectsAsync(IEnumerable<Service> services, string buildWorkingDirectory)
         {
             var projectGroups = new Dictionary<string, ProjectGroup>();
             var groupCount = 0;
@@ -85,7 +86,7 @@ namespace Microsoft.Tye.Hosting
                 string workingDirectory;
                 if (serviceDescription.RunInfo is ProjectRunInfo project)
                 {
-                    args = project.Args == null ? project.RunArguments : project.RunArguments + " " + project.Args;
+                    args = (project.Args == null ? project.RunArguments : project.RunArguments + " " + project.Args) ?? "";
                     path = project.RunCommand;
 
                     workingDirectory = project.ProjectFile.Directory!.FullName;
@@ -288,7 +289,7 @@ namespace Microsoft.Tye.Hosting
 
                     try
                     {
-                        service.Logs.OnNext($"[{replica}]:{path} {copiedArgs}");
+                        service.Logs.OnNext($"[{replica}][{DateTime.Now.ToString("HH:mm:ss")}]:{path} {copiedArgs}");
 
                         var project = service.Description.RunInfo as ProjectRunInfo;
                         var hotreload = project != null && processInfo.Watch && project.HotReload;
@@ -297,7 +298,7 @@ namespace Microsoft.Tye.Hosting
                         {
                             path = "dotnet";
                             copiedArgs = $"watch run --non-interactive --no-launch-profile --project {project!.ProjectFile.FullName} -- {copiedArgs}";
-                        }
+                        }                        
                         else if (service.ServiceType == ServiceType.Function)
                         {
                             // Need to inject port and UseHttps as an argument to func.exe rather than environment variables.
@@ -307,6 +308,11 @@ namespace Microsoft.Tye.Hosting
                             {
                                 copiedArgs += " --useHttps";
                             }
+                        }
+                        else if (_options.UseDotnetRun && project != null)
+                        {
+                            path = "dotnet";
+                            copiedArgs = $"run --interactive --no-launch-profile --project {project!.ProjectFile.FullName} -- {copiedArgs}";
                         }
 
                         _logger.LogInformation("Launching service {ServiceName}: {ExePath} {args}", replica, path, copiedArgs);
@@ -319,7 +325,7 @@ namespace Microsoft.Tye.Hosting
                             EnvironmentVariables = environment,
                             OutputData = data =>
                             {
-                                service.Logs.OnNext($"[{replica}]: {data}");
+                                service.Logs.OnNext($"[{replica}][{DateTime.Now.ToString("HH:mm:ss")}]: {data}");
                                 if (hotreload && data.StartsWith("dotnet watch"))
                                 {
                                     _logger.LogInformation("[{replica}] {data}", replica, data);
@@ -335,8 +341,17 @@ namespace Microsoft.Tye.Hosting
                                         service.Items["_hotreload_exited_once"] = true;
                                     }
                                 }
+                                else if (status.State == ReplicaState.InteractionRequired && data.TrimStart().StartsWith("Restored "))
+                                {
+                                    service.ReplicaEvents.OnNext(new ReplicaEvent(ReplicaState.Started, status));
+                                }
+                                else if (status.State == ReplicaState.InteractionRequired || data.Contains("interaction required"))
+                                {
+                                    service.ReplicaEvents.OnNext(new ReplicaEvent(ReplicaState.InteractionRequired, status));
+                                    _logger.LogInformation("[{replica}] {data}", replica, data);
+                                }
                             },
-                            ErrorData = data => service.Logs.OnNext($"[{replica}]: {data}"),
+                            ErrorData = data => service.Logs.OnNext($"[{replica}][{DateTime.Now.ToString("HH:mm:ss")}]: {data}"),
                             OnStart = pid =>
                             {
                                 if (hasPorts)
@@ -392,6 +407,7 @@ namespace Microsoft.Tye.Hosting
                                 {
                                     _logger.LogInformation("{ServiceName} process exited with exit code {ExitCode}", replica, status.ExitCode);
                                 }
+                                service.Items.Remove("_hotreload_exited_once");
                             },
                             Build = async () =>
                             {
