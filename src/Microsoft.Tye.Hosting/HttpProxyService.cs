@@ -172,13 +172,14 @@ namespace Microsoft.Tye.Hosting
                                                 next = (int)(Interlocked.Increment(ref count) % uris.Count);
                                             }
 
-                                            // if we've looped through all the port and didn't find a single one that is `Ready`, we return HTTP BadGateway
-                                            if (!_readyPorts.ContainsKey(uris[next].Port))
+                                            // if we've looped through all the port and didn't find a single one that is `Ready`, we return HTTP BadGateway, but only if we have more then 1 uri anyway, if we just have one.. just forward the request
+                                            if (!_readyPorts.ContainsKey(uris[next].Port) && uris.Count > 1)
                                             {
                                                 context.Response.StatusCode = (int)HttpStatusCode.BadGateway;
                                                 await context.Response.WriteAsync("Bad gateway");
                                                 return;
                                             }
+
                                             var uri = new UriBuilder(uris[next].Uri)
                                             {
                                                 Path = rule.PreservePath ? $"{context.Request.Path}" : (string?)context.Request.RouteValues["path"] ?? "/",
