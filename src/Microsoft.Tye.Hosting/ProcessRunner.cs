@@ -297,7 +297,7 @@ namespace Microsoft.Tye.Hosting
                         if (hotreload)
                         {
                             path = "dotnet";
-                            copiedArgs = $"watch run --non-interactive --no-launch-profile --project {project!.ProjectFile.FullName} -- {copiedArgs}";
+                            copiedArgs = $"watch run --non-interactive --launch-profile  \"tye\" --project {project!.ProjectFile.FullName} -- {copiedArgs}";
                         }                        
                         else if (service.ServiceType == ServiceType.Function)
                         {
@@ -312,7 +312,7 @@ namespace Microsoft.Tye.Hosting
                         else if (_options.UseDotnetRun && project != null)
                         {
                             path = "dotnet";
-                            copiedArgs = $"run --interactive --no-launch-profile --project {project!.ProjectFile.FullName} -- {copiedArgs}";
+                            copiedArgs = $"run --interactive --launch-profile \"tye\" --project {project!.ProjectFile.FullName} -- {copiedArgs}";
                         }
 
                         _logger.LogInformation("Launching service {ServiceName}: {ExePath} {args}", replica, path, copiedArgs);
